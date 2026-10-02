@@ -1,0 +1,94 @@
+:root {
+  --work: #fbc8c8;
+  --break: #b4f0b8;
+  --ink: #1e1e1e;
+  --grey: #e9ecef;
+  font-family: system-ui, sans-serif;
+  color: var(--ink);
+}
+
+* { box-sizing: border-box; }
+
+html, body, #app { margin: 0; height: 100%; }
+
+main {
+  position: relative;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  user-select: none;
+}
+main.work { background: var(--work); }
+main.break { background: var(--break); }
+
+h1 {
+  margin: 0;
+  font-size: 44px;
+  font-weight: 500;
+  text-decoration: underline;
+  text-underline-offset: 6px;
+  text-decoration-thickness: 3px;
+}
+
+.label { margin: 0; font-family: ui-monospace, monospace; font-size: 14px; }
+
+.time { margin: 0; font-family: ui-monospace, monospace; font-size: 26px; }
+.time.paused { opacity: 0.45; }
+
+.row { display: flex; gap: 6px; align-items: center; }
+
+button {
+  font: inherit;
+  font-size: 14px;
+  color: var(--ink);
+  border: 1.5px solid var(--ink);
+  border-radius: 2px;
+  cursor: pointer;
+  height: 32px;
+}
+button:disabled { cursor: default; opacity: 0.6; }
+
+.icon {
+  width: 32px;
+  padding: 4px;
+  background: var(--grey);
+  display: grid;
+  place-items: center;
+}
+.icon svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.icon polygon { fill: currentColor; }
+
+.corner { position: absolute; top: 10px; right: 10px; }
+
+.switch { padding: 0 10px; }
+main.work .switch { background: var(--break); }
+main.break .switch { background: var(--work); }
+
+.done { padding: 0 18px; background: var(--grey); font-family: ui-monospace, monospace; }
+
+.error { margin: 0; color: #a10000; font-size: 12px; text-align: center; padding: 0 12px; }
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: rgba(255, 255, 255, 0.82);
+  font-family: ui-monospace, monospace;
+}
+
+.settings { background: rgba(255, 255, 255, 0.95); padding: 12px 20px; align-items: stretch; }
+.settings label { display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: 13px; }
+.settings input { font: inherit; padding: 4px 6px; border: 1.5px solid var(--ink); border-radius: 2px; }
+.settings input[type='number'] { width: 80px; }
+.settings .path { flex-direction: column; align-items: stretch; gap: 4px; }
+.settings .path span { display: flex; gap: 4px; }
+.settings .path input { flex: 1; min-width: 0; height: 32px; }
+.settings .path button { width: 32px; background: var(--grey); }
+.settings .row { justify-content: center; }
