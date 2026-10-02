@@ -29,13 +29,11 @@ impl Inner {
     }
 
     /// Append the session unless it is shorter than the configured minimum.
-    /// Returns whether it was written.
-    fn save(&self, session: &Session) -> Result<bool, String> {
+    fn save(&self, session: &Session) -> Result<(), String> {
         if session.length_s < self.config.min_session_s {
-            return Ok(false);
+            return Ok(());
         }
-        storage::append_session(&self.config.data_path, session).map_err(err)?;
-        Ok(true)
+        storage::append_session(&self.config.data_path, session).map_err(err)
     }
 
     fn view(&self) -> View {
@@ -81,21 +79,6 @@ fn send_notification(body: &str) -> zbus::Result<()> {
     Ok(())
 }
 
-/// 5410 -> "1h 30m 10s", same format as the settings inputs.
-fn human(total: u64) -> String {
-    let parts: Vec<String> = [(3600, "h"), (60, "m"), (1, "s")]
-        .iter()
-        .scan(total, |rest, &(n, u)| {
-            let v = *rest / n;
-            *rest %= n;
-            Some((v, u))
-        })
-        .filter(|(v, _)| *v > 0)
-        .map(|(v, u)| format!("{v}{u}"))
-        .collect();
-    if parts.is_empty() { "0s".into() } else { parts.join(" ") }
-}
-
 #[tauri::command]
 fn get_state(state: State<AppState>) -> View {
     state.lock().unwrap().view()
@@ -127,16 +110,8 @@ fn switch_mode(state: State<AppState>) -> Result<View, String> {
     let mut s = state.lock().unwrap();
     let now = Instant::now();
     let session = s.timer.session(now, s.threshold());
-    let saved = s.save(&session)?;
+    s.save(&session)?;
     s.timer.switch(now);
-    let (done, next) = match s.timer.mode() {
-        Mode::Break => ("Worked", "Break started, rest for at least"),
-        Mode::Work => ("Rested", "Work started, hold on for at least"),
-    };
-    let skipped = if saved { "" } else { " (too short, not saved)" };
-    notify(
-        &format!("{done} {}{skipped}. {next} {}.", human(session.length_s), human(s.threshold())),
-    );
     Ok(s.view())
 }
 
@@ -186,8 +161,8 @@ fn spawn_ticker(app: AppHandle) {
         let _ = app.emit("tick", &view);
         if crossed {
             let body = match view.mode {
-                Mode::Work => "Minimum work time reached. Keep going or take a break.",
-                Mode::Break => "Minimum break reached. Rest more or get back to work.",
+                Mode::Work => "Well done, you can rest now",
+                Mode::Break => "That was needed, you may continue with work",
             };
             notify(body);
             let _ = app.emit("threshold-reached", ());
@@ -230,15 +205,4 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running Repoti");
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn human_durations() {
-        assert_eq!(super::human(5410), "1h 30m 10s");
-        assert_eq!(super::human(1500), "25m");
-        assert_eq!(super::human(3605), "1h 5s");
-        assert_eq!(super::human(0), "0s");
-    }
 }
