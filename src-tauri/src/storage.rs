@@ -12,11 +12,23 @@ pub struct Config {
     pub work_threshold_s: u64,
     pub break_threshold_s: u64,
     pub data_path: PathBuf,
+    /// Sessions shorter than this are not written to the data file.
+    #[serde(default = "default_min_session_s")]
+    pub min_session_s: u64,
+}
+
+fn default_min_session_s() -> u64 {
+    5
 }
 
 impl Config {
     pub fn default_with(data_path: PathBuf) -> Self {
-        Config { work_threshold_s: 25 * 60, break_threshold_s: 5 * 60, data_path }
+        Config {
+            work_threshold_s: 25 * 60,
+            break_threshold_s: 5 * 60,
+            data_path,
+            min_session_s: default_min_session_s(),
+        }
     }
 }
 
@@ -134,6 +146,9 @@ mod tests {
         let cfg = Config { work_threshold_s: 60, ..def };
         save_config(&p, &cfg).unwrap();
         assert_eq!(load_config(&p, PathBuf::new()).work_threshold_s, 60);
+        // configs written before min_session_s existed still load
+        fs::write(&p, r#"{"work_threshold_s":60,"break_threshold_s":60,"data_path":"x.csv"}"#).unwrap();
+        assert_eq!(load_config(&p, PathBuf::new()).min_session_s, 5);
         fs::remove_dir_all(dir).unwrap();
     }
 }

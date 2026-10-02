@@ -1,12 +1,20 @@
 <script>
+  import { untrack } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { save } from '@tauri-apps/plugin-dialog';
+  import { parseDuration, formatDuration } from './util.js';
 
   let { config, onclose } = $props();
+  // The form edits a draft; the config prop is only read once when it opens.
+  const initial = untrack(() => config);
 
-  let workMin = $state(config.work_threshold_s / 60);
-  let breakMin = $state(config.break_threshold_s / 60);
-  let dataPath = $state(config.data_path);
+  let workText = $state(formatDuration(initial.work_threshold_s));
+  let breakText = $state(formatDuration(initial.break_threshold_s));
+  let workS = $derived(parseDuration(workText));
+  let breakS = $derived(parseDuration(breakText));
+  let minText = $state(formatDuration(initial.min_session_s));
+  let minS = $derived(parseDuration(minText, true));
+  let dataPath = $state(initial.data_path);
   let error = $state('');
 
   async function browse() {
@@ -20,12 +28,17 @@
   async function submit(e) {
     e.preventDefault();
     error = '';
+    if (!workS || !breakS || minS === null) {
+      error = 'use e.g. 1h30m10s, 30m 10s or 45m';
+      return;
+    }
     try {
       await invoke('set_config', {
         cfg: {
-          work_threshold_s: Math.round(workMin * 60),
-          break_threshold_s: Math.round(breakMin * 60),
+          work_threshold_s: workS,
+          break_threshold_s: breakS,
           data_path: dataPath,
+          min_session_s: minS,
         },
       });
       onclose();
@@ -36,8 +49,9 @@
 </script>
 
 <form class="overlay settings" onsubmit={submit}>
-  <label>work (min) <input type="number" min="1" max="600" step="1" bind:value={workMin} required /></label>
-  <label>break (min) <input type="number" min="1" max="600" step="1" bind:value={breakMin} required /></label>
+  <label>work <input type="text" class:invalid={!workS} placeholder="25m" bind:value={workText} required /></label>
+  <label>break <input type="text" class:invalid={!breakS} placeholder="5m" bind:value={breakText} required /></label>
+  <label title="sessions shorter than this are not saved">skip under <input type="text" class:invalid={minS === null} placeholder="5s" bind:value={minText} required /></label>
   <label class="path">
     data file
     <span><input type="text" bind:value={dataPath} required /><button type="button" onclick={browse}>…</button></span>

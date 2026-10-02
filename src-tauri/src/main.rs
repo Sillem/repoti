@@ -3,14 +3,14 @@
 mod storage;
 mod timer;
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
 use storage::Config;
 use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
-use tauri_plugin_notification::NotificationExt;
-use timer::{Mode, Timer, View};
+use timer::{Mode, Session, Timer, View};
 
 struct Inner {
     timer: Timer,
@@ -28,6 +28,16 @@ impl Inner {
         }
     }
 
+    /// Append the session unless it is shorter than the configured minimum.
+    /// Returns whether it was written.
+    fn save(&self, session: &Session) -> Result<bool, String> {
+        if session.length_s < self.config.min_session_s {
+            return Ok(false);
+        }
+        storage::append_session(&self.config.data_path, session).map_err(err)?;
+        Ok(true)
+    }
+
     fn view(&self) -> View {
         self.timer.view(Instant::now(), self.threshold())
     }
@@ -37,6 +47,53 @@ type AppState = Mutex<Inner>;
 
 fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
+}
+
+/// Desktop notification over D-Bus, sent off-thread so the caller never blocks.
+fn notify(body: &str) {
+    let body = body.to_owned();
+    thread::spawn(move || {
+        if let Err(e) = send_notification(&body) {
+            eprintln!("notification failed: {e}");
+        }
+    });
+}
+
+/// Uses one session-bus connection for the app's lifetime: GNOME Shell drops a
+/// notification as soon as its sender disconnects, unless it can map the
+/// sender to an installed .desktop app.
+fn send_notification(body: &str) -> zbus::Result<()> {
+    static CONN: Mutex<Option<zbus::blocking::Connection>> = Mutex::new(None);
+    let mut conn = CONN.lock().unwrap();
+    if conn.is_none() {
+        *conn = Some(zbus::blocking::Connection::session()?);
+    }
+    let hints: HashMap<&str, zbus::zvariant::Value> =
+        HashMap::from([("desktop-entry", "Repoti".into())]);
+    conn.as_ref().unwrap().call_method(
+        Some("org.freedesktop.Notifications"),
+        "/org/freedesktop/Notifications",
+        Some("org.freedesktop.Notifications"),
+        "Notify",
+        // app_name, replaces_id, icon, summary, body, actions, hints, timeout
+        &("Repoti", 0u32, "com.addoh.repoti", "Repoti", body, Vec::<&str>::new(), hints, -1i32),
+    )?;
+    Ok(())
+}
+
+/// 5410 -> "1h 30m 10s", same format as the settings inputs.
+fn human(total: u64) -> String {
+    let parts: Vec<String> = [(3600, "h"), (60, "m"), (1, "s")]
+        .iter()
+        .scan(total, |rest, &(n, u)| {
+            let v = *rest / n;
+            *rest %= n;
+            Some((v, u))
+        })
+        .filter(|(v, _)| *v > 0)
+        .map(|(v, u)| format!("{v}{u}"))
+        .collect();
+    if parts.is_empty() { "0s".into() } else { parts.join(" ") }
 }
 
 #[tauri::command]
@@ -52,7 +109,7 @@ fn get_config(state: State<AppState>) -> Config {
 #[tauri::command]
 fn set_config(state: State<AppState>, cfg: Config) -> Result<Config, String> {
     if cfg.work_threshold_s == 0 || cfg.break_threshold_s == 0 {
-        return Err("thresholds must be at least 1 minute".into());
+        return Err("thresholds must be greater than zero".into());
     }
     if cfg.data_path.as_os_str().is_empty() {
         return Err("data file path is empty".into());
@@ -70,8 +127,16 @@ fn switch_mode(state: State<AppState>) -> Result<View, String> {
     let mut s = state.lock().unwrap();
     let now = Instant::now();
     let session = s.timer.session(now, s.threshold());
-    storage::append_session(&s.config.data_path, &session).map_err(err)?;
+    let saved = s.save(&session)?;
     s.timer.switch(now);
+    let (done, next) = match s.timer.mode() {
+        Mode::Break => ("Worked", "Break started, rest for at least"),
+        Mode::Work => ("Rested", "Work started, hold on for at least"),
+    };
+    let skipped = if saved { "" } else { " (too short, not saved)" };
+    notify(
+        &format!("{done} {}{skipped}. {next} {}.", human(session.length_s), human(s.threshold())),
+    );
     Ok(s.view())
 }
 
@@ -98,7 +163,7 @@ fn quit(app: AppHandle, state: State<AppState>) -> Result<(), String> {
         let now = Instant::now();
         s.timer.pause(now);
         let session = s.timer.session(now, s.threshold());
-        storage::append_session(&s.config.data_path, &session).map_err(err)?;
+        s.save(&session)?;
         s.saved_for_exit = true;
     }
     app.exit(0);
@@ -124,7 +189,7 @@ fn spawn_ticker(app: AppHandle) {
                 Mode::Work => "Minimum work time reached. Keep going or take a break.",
                 Mode::Break => "Minimum break reached. Rest more or get back to work.",
             };
-            let _ = app.notification().builder().title("Repoti").body(body).show();
+            notify(body);
             let _ = app.emit("threshold-reached", ());
         }
     });
@@ -132,7 +197,6 @@ fn spawn_ticker(app: AppHandle) {
 
 fn main() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let paths = app.path();
@@ -166,4 +230,15 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running Repoti");
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn human_durations() {
+        assert_eq!(super::human(5410), "1h 30m 10s");
+        assert_eq!(super::human(1500), "25m");
+        assert_eq!(super::human(3605), "1h 5s");
+        assert_eq!(super::human(0), "0s");
+    }
 }
